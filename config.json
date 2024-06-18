@@ -1,0 +1,21 @@
+{
+    "clientId": "",
+    "token": "",
+    "staffId": "",
+    "welcome": "",
+    "botNotifs": "",
+    "cooldownBypassId": "",
+    "logsChannel": "",
+	"whitelist":["AlphaDino"],
+    
+    "footer": "",
+    "color": "",
+    "logo": "",
+    "banner": "",
+
+    "username": "sexbot",
+    "password": "",
+    "loginMessage": "",
+    "tpaAcceptedMessage": "",
+    "pendingRequest": ""
+}

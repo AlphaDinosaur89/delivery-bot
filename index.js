@@ -69,15 +69,44 @@ try {
 }
 })();
 
+
 const mainBot = () => {
+    
   const bot = mineflayer.createBot({
     host: 'localhost',
-    port: '51299',
+    port: '59463',
     version: '1.19.3',
     username: config.username,
     skipValidation: true,
   });
+    
+  function order(username) {
+      if (!config.whitelist.includes(username.toString())) {
+          bot.chat(`/w ${username.toString()} you are not on the whitelist, ask the bot owner to add you.`);
+          return;
+      }
+      if (!commandCooldowns[username.toString()] || Date.now() - commandCooldowns[username.toString()] >= 15 * 60 * 1000) {
+          if (isServerOnCooldown()) {
+              if (!bot.queue.includes(username.toString())) {
+                  bot.queue.push(username.toString());
+                  bot.chat(`/w ${username.toString()} i am already delivering a kit, you have been added to the queue.`);
+              } else {
+                  bot.chat(`/w ${username.toString()} i am already delivering a kit, you are already in the queue.`);
+              }
+          } else {
+              bot.chat(`/w ${username.toString()} accept the tpa request to receive your kit.`);
 
+              new Delivery(arg, username.toString(), null, minecraft=true);
+              updateServerCooldown();
+          }
+      } else {
+          const remainingTime = Math.ceil((15 * 60 * 1000 - (Date.now() - commandCooldowns[username.toString()])) / 1000);
+
+          bot.chat(`/w ${username.toString()} you are on cooldown, you have ${format(remainingTime)} left until you can order again.`);
+      }
+  }
+
+  bot.queue = []
   bot.loadPlugin(pathfinder);
   const defaultMove = new Movements(bot);
   defaultMove.canDig = false;
@@ -85,8 +114,6 @@ const mainBot = () => {
   
   // Code by fit.mc (AlphaDino) (you can remove this)
   
-  // modify this if you want a better command system through whispers or ask me to do it
-  // (i was only asked to make it so you can order through whispers)
   bot.on("whisper", (username, message) => {
     let splitmsg = message.toString().split(' ');
     
@@ -101,25 +128,15 @@ const mainBot = () => {
     
     switch (command) {
       case "order":
-        if (!config.whitelist.includes(username.toString())) {
-            bot.chat(`/w ${username.toString()} you are not on the whitelist, ask the bot owner to add you.`)
-            break;
-        }
-        if (!commandCooldowns[username.toString()] || Date.now() - commandCooldowns[username.toString()] >= 15 * 60 * 1000) {
-            if (isServerOnCooldown()) {
-                bot.chat(`/w ${username.toString()} i am already delivering a kit, try again in 30 seconds.`);
-            } else {
-                bot.chat(`/w ${username.toString()} accept the tpa request to receive your kit.`);
-                
-                new Delivery(arg, ign, null, minecraft=true);
-                updateServerCooldown();
-            }
-          } else {
-              const remainingTime = Math.ceil((15 * 60 * 1000 - (Date.now() - commandCooldowns[username.toString()])) / 1000);
-            
-              bot.chat(`/w ${username.toString()} you are on cooldown, you have ${format(remainingTime)} left until you can order again.`);
-          }
+        order(username);
         break;
+    }
+  });
+  
+  bot.on('physicTick', () => {
+    if (!isServerOnCooldown() && bot.queue.length > 0) {
+        order(bot.queue[0]);
+        bot.queue = bot.queue.slice(1);
     }
   });
 
@@ -142,7 +159,6 @@ const mainBot = () => {
     bot.end();
 
   });
-
 
   bot.on("kicked", (err) => {
     console.log(err);
@@ -172,7 +188,7 @@ client.on('ready', (c) => {
     log(`logged in as: ${c.user.tag}`)
 });
 
-client.login(config.token);
+//client.login(config.token);
 
 client.on('guildMemberAdd', member => {
     const embed = new EmbedBuilder()

@@ -86,13 +86,16 @@ const mainBot = () => {
           return;
       }
       if (!commandCooldowns[username.toString()] || Date.now() - commandCooldowns[username.toString()] >= 15 * 60 * 1000) {
-          if (isServerOnCooldown()) {
-              if (!bot.queue.includes(username.toString())) {
-                  bot.queue.push(username.toString());
-                  bot.chat(`/w ${username.toString()} i am already delivering a kit, you have been added to the queue.`);
-              } else {
+        bot.chat(`/w ${username.toString()} i am already delivering a kit or on tpa cooldown, you have been added to the queue.`);
+              /*
+              if (isServerOnCooldown()) {
+                  if (!bot.queue.includes(username.toString())) {
+                      bot.queue.push(username.toString());
+                  } else {
                   bot.chat(`/w ${username.toString()} i am already delivering a kit, you are already in the queue.`);
+                  }
               }
+              */
           } else {
               bot.chat(`/w ${username.toString()} accept the tpa request to receive your kit.`);
 
@@ -172,7 +175,7 @@ const mainBot = () => {
   });
 
 const commandCooldowns = {};
-const globalCooldown = 30 * 1000;
+const globalCooldown = 30 * 630000;
 let lastCommandTime = 0;
 
 const client = new Client({
@@ -527,8 +530,8 @@ class Delivery {
             console.log(coolIgn[0]);
             bot.chat(`/tpa ${coolIgn}`);
             return
-          }, 2000);
-                  
+          }, 2000);,
+          
           bot.on("messagestr", (message) => {
             if (message.startsWith(config.tpaAcceptedMessage)) {
                 logCords(this.interaction, ign, new Date(), kitData, bot, minecraft=minecraft)

@@ -1,4 +1,4 @@
-const { Client, IntentsBitField, SlashCommandBuilder, DataResolver, ModalBuilder, TextInputBuilder, TextInputStyle, REST, Routes, EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle, time } = require('discord.js');
+const { Client, WebhookClient, IntentsBitField, SlashCommandBuilder, DataResolver, ModalBuilder, TextInputBuilder, TextInputStyle, REST, Routes, EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle, time } = require('discord.js');
 const fs = require('fs');
 const internal = require('stream');
 const config = JSON.parse(fs.readFileSync("./config.json", "utf-8"));
@@ -9,6 +9,12 @@ const { GoalNear } = require('mineflayer-pathfinder').goals
 const Vec3 = require('vec3');
 const path = require('path');
 const rest = new REST({ version: '10' }).setToken(config.token);
+const repl = require('repl');
+
+var webhook = config.webhook.split('/');
+const webhookId = webhook[webhook.length-2];
+const webhookToken = webhook[webhook.length-1];
+webhook = new WebhookClient({id: webhookId, token: webhookToken});
 
 const commands = [
   new SlashCommandBuilder()
@@ -51,6 +57,14 @@ const commands = [
       .setName('banner')
       .setDescription('set a banner for the bot')
       .addAttachmentOption(option => option.setName('attachment').setDescription('the image (png or gif)').setRequired(true)),
+  new SlashCommandBuilder()
+      .setName('cancel')
+      .setDescription('cancel an order')
+      .addSubcommand(subcommand =>
+          subcommand
+              .setName('order')
+              .setDescription('(admin only) cancel an order')
+              .addStringOption(option => option.setName('ign').setDescription('will remove all delivers in the queue to the specified ign').setRequired(true))),
 ].map(command => command.toJSON());
 
 
@@ -71,35 +85,85 @@ try {
 
 
 const mainBot = () => {
-    
+
+  const client = new Client({
+    intents: [
+        IntentsBitField.Flags.Guilds,
+        IntentsBitField.Flags.GuildMembers,
+        IntentsBitField.Flags.GuildMessages,
+        IntentsBitField.Flags.MessageContent,
+      ]
+  });
+
+  client.on('ready', (c) => {
+      log(`logged in as: ${c.user.tag}`)
+    client.user.setStatus('dnd')
+  });
+
+  client.login(config.token);
+  
   const bot = mineflayer.createBot({
-    host: 'localhost',
-    port: '59463',
+    host: 'anarchy.6b6t.org',
+    //port: '10000',
     version: '1.19.3',
     username: config.username,
     skipValidation: true,
   });
-    
-  function order(username) {
+  
+  bot.once("login", () => {
+        setInterval(() => {
+            bot.setControlState("sneak", true);
+        }, 250);
+        setInterval(() => {
+            bot.setControlState("sneak", false);
+        }, 500);
+  });
+  
+  var secondBot = undefined;
+  setTimeout(() => {
+      log("attempting to connect with second bot")
+      secondBot = mineflayer.createBot({
+        host: 'anarchy.6b6t.org',
+        version: '1.19.3',
+        username: config.secondUsername,
+        skipValidation: true,
+      });
+      client.user.setStatus('online')
+  
+      secondBot.on("message", (message) => {
+        //console.log(`[${config.secondUsername}] > ${message}`)
+        if (message.toString().includes(config.loginMessage)) {
+          secondBot.chat('/login ' + config.secondPassword);
+        };
+      });
+      
+      secondBot.on("end", (reason) => {
+          console.log(reason);
+      })
+  }, 16000);
+  
+  /*
+  bot.once('login', () => {
+      bot.setControlState("forward", true);
+      setTimeout(() => {bot.setControlState('forward', false)}, 10000);
+  });
+  */
+  
+  /*
+  function order(kitname, ign, amount,interaction) {
+      /*
       if (!config.whitelist.includes(username.toString())) {
           bot.chat(`/w ${username.toString()} you are not on the whitelist, ask the bot owner to add you.`);
           return;
       }
       if (!commandCooldowns[username.toString()] || Date.now() - commandCooldowns[username.toString()] >= 15 * 60 * 1000) {
-        bot.chat(`/w ${username.toString()} i am already delivering a kit or on tpa cooldown, you have been added to the queue.`);
-              /*
-              if (isServerOnCooldown()) {
-                  if (!bot.queue.includes(username.toString())) {
-                      bot.queue.push(username.toString());
-                  } else {
-                  bot.chat(`/w ${username.toString()} i am already delivering a kit, you are already in the queue.`);
-                  }
-              }
-              */
+          if (isServerOnCooldown()) {
+              bot.chat(`/w ${username.toString()} i am already delivering a kit or on tpa cooldown, you have been added to the queue.`);
+              bot.queue.push(username.toString());
           } else {
               bot.chat(`/w ${username.toString()} accept the tpa request to receive your kit.`);
 
-              new Delivery(arg, username.toString(), null, minecraft=true);
+              new Delivery(arg, username.toString(), interaction);
               updateServerCooldown();
           }
       } else {
@@ -108,15 +172,45 @@ const mainBot = () => {
           bot.chat(`/w ${username.toString()} you are on cooldown, you have ${format(remainingTime)} left until you can order again.`);
       }
   }
+  */
+  
+    function delivery(name, ign, amount, interaction) {
+        updateSecondaryCooldown();
+        var tpaAccepted = false;
+        console.log("second bot attempting tpa");
+        secondBot.chat(`/tpa ${ign}`);
+        bot.chat(`/w ${ign} Please accept the tpa request from ${config.secondUsername} so the delivery can start ` + makeid());
+        secondBot.chat(`/w ${ign} if you kill me your order will fail! make sure i dont die ${makeid()}`);
+        secondBot.chat(`/w ${ign} when the order is finished i will /kill and drop any items i picked up! ${makeid()}`)
+        var deliveringIgn = ign;
+        
+        secondBot.on("messagestr", (message) => {
+            if (message.toLowerCase().startsWith(config.tpaAcceptedMessage.toLowerCase())) {
+                console.log("tpa accepted");
+                tpaAccepted = true;
+                setTimeout(() => {
+                    new Delivery(name, ign, amount, interaction);
+                    updateServerCooldown();
+                }, 16000);
+            }
+        });
+        setTimeout(() => {
+            if (!tpaAccepted) {
+                cancelOrder(ign);
+                lastCommandTime = 0;
+            }
+        }, 60000);
+    }
 
-  bot.queue = []
-  bot.loadPlugin(pathfinder);
-  const defaultMove = new Movements(bot);
-  defaultMove.canDig = false;
-  defaultMove.allowSprinting = true;
+    bot.queue = []
+    bot.loadPlugin(pathfinder);
+    const defaultMove = new Movements(bot);
+    defaultMove.canDig = false;
+    defaultMove.allowSprinting = true;
   
   // Code by fit.mc (AlphaDino) (you can remove this)
   
+  /*
   bot.on("whisper", (username, message) => {
     let splitmsg = message.toString().split(' ');
     
@@ -135,19 +229,41 @@ const mainBot = () => {
         break;
     }
   });
+  */
   
   bot.on('physicTick', () => {
     if (!isServerOnCooldown() && bot.queue.length > 0) {
-        order(bot.queue[0]);
-        bot.queue = bot.queue.slice(1);
+        var d = bot.queue[0];
+        bot.queue.shift();
+        if (!d.followup) {
+            new Delivery(d.name, d.ign, d.amount, d.interaction);
+            updateServerCooldown();
+        } else {
+            delivery(d.name, d.ign, d.amount, d.interaction);
+        }
     }
   });
-
+  
+    const r = repl.start(config.username + '> ')
+    r.context.bot = bot;
+    r.context.secondBot = secondBot;
+    
+	r.on('exit', () => {
+		bot.end()
+	})
+  
+  bot.on("end", (reason) => {
+      console.error(reason);
+      console.log("Main bot disconnected from server");
+      cancelAllOrders();
+      //process.exit();
+  });
   bot.on("message", (message) => {
-    log(message.toAnsi())
-    if (message.toString() === config.loginMessage) {
-      bot.chat('/login ' + config.password);
+    log(message.toAnsi());
+    if (message.toString().includes(config.loginMessage)) {
+        bot.chat('/login ' + config.password);
     };
+    /*
     if (message.toString().includes('has requested to teleport to you. Type /tpaccept to accept it.')) {
         const args = message.toString().split(" ");
         const username = args[0];
@@ -155,6 +271,7 @@ const mainBot = () => {
             bot.chat('/tpaccept')
         }
     }
+    */
   });
 
   bot.on("error", (err) => {
@@ -175,23 +292,10 @@ const mainBot = () => {
   });
 
 const commandCooldowns = {};
-const globalCooldown = 30 * 630000;
+var globalCooldown = 630000;
 let lastCommandTime = 0;
-
-const client = new Client({
-  intents: [
-      IntentsBitField.Flags.Guilds,
-      IntentsBitField.Flags.GuildMembers,
-      IntentsBitField.Flags.GuildMessages,
-      IntentsBitField.Flags.MessageContent,
-    ]
-});
-
-client.on('ready', (c) => {
-    log(`logged in as: ${c.user.tag}`)
-});
-
-//client.login(config.token);
+var secondaryCooldown = 61000;
+var secondaryTime = 0;
 
 client.on('guildMemberAdd', member => {
     const embed = new EmbedBuilder()
@@ -218,18 +322,120 @@ client.on('guildMemberRemove', member => {
     member.guild.channels.cache.get(config.welcome).send({ embeds: [embed] });
 });
 
+function anyQueuedOrder(ign) {
+    // check if there is any order by the ign in the queue
+    for (var i = 0; i < bot.queue.length; i++) {
+        var order = bot.queue[i];
+        if (order.ign == ign.replace('\n', '')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function cancelAllOrders() {
+    var igns = []
+    for (var i = 0; i < bot.queue.length; i++) {
+        if (!igns.includes(bot.queue[i].ign)) {
+            igns.push(bot.queue[i].ign);
+        }
+    }
+    for (var i = 0; i < bot.queue.length; i++) {
+        cancelOrder(igns[i]);
+    }
+}
+
+function cancelOrder(ign, interaction=undefined) {
+    //offListeners(handler, handler2);
+    let splicecache = []
+    var kitstodeliver = [];
+    bot.chat("/kill");
+    secondBot.chat("/kill");
+    client.user.setStatus('online');
+    bot.chat(`/w ${ign} Order canceled ask shop owner or smth tp make the bot deliver again`);
+    for (var i = 0; i < bot.queue.length; i++) {
+        var order = bot.queue[i];
+        if (order.ign == ign.replace('\n', '')) {
+            splicecache.push(i);
+        }
+    }
+    // remove queued delivers for the same person
+    if (splicecache.length > 0) {
+        for (var i = splicecache.length-1; i >= 0; i--) {
+            kitstodeliver.push({"name": bot.queue[splicecache[i]].name, "ign": bot.queue[splicecache[i]].ign, "amount": bot.queue[splicecache[i]].amount})
+            bot.queue.splice(splicecache[i], 1);
+        }
+    }
+    if (interaction != undefined) {
+        const embed = new EmbedBuilder()
+        .setTitle('order canceled')
+        .setColor(config.color)
+        .setFooter({
+            text: config.footer,
+            iconURL: config.logo,
+          })
+        .setTimestamp();
+        interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+    var todeliver = {};
+    if(kitstodeliver.length > 0) {
+        for (var i = 0; i < kitstodeliver.length; i++) {
+            if (todeliver[kitstodeliver[i].name] == undefined) {
+                todeliver[kitstodeliver[i].name] = 0;
+            }
+            todeliver[kitstodeliver[i].name] += kitstodeliver[i].amount;
+        }
+    }
+    let str = "";
+    if (Object.keys(todeliver).length != 0) {
+        str = ign + "'s order canceled\nKits left to deliver: ```\n"
+        for (var i = 0; i < Object.keys(todeliver).length; i++) {
+            let kitname = Object.keys(todeliver)[i];
+            str += `${kitname}: ${todeliver[kitname]}\n`
+        }
+        str += "```"
+    }
+    webhook.send(`If ${ign}'s was canceled while i was waiting for a tpy it wont be counted in the kits left to deliver thing :warning:\n${str}`).catch(console.error);
+}
+
+function checkIfUserIsInQueue(ign) {
+    for (var i = 0; i < bot.queue.length; i++) {
+        if (ign === bot.queue[i].ign) return true;
+    }
+    return false;
+}
+
 client.on('interactionCreate', async interaction => {
     if (!interaction.isCommand()) return;
   
     const { commandName, options } = interaction;
+  
+    if (commandName === 'cancel') {
+        if (interaction.options.getSubcommand() === 'order') {
+            var ign = options.getString("ign");
+            if (checkIfUserIsInQueue(ign)) {
+                cancelOrder(ign, interaction);
+            } else {
+                const embed = new EmbedBuilder()
+                  .setTitle("the given username is not in the queue so the order can not be canceled...")
+                  .setColor(config.color)
+                  .setFooter({
+                      text: config.footer,
+                      iconURL: config.logo,
+                    })
+                  .setTimestamp();
+                  interaction.reply({ embeds: [embed], ephemeral: true });
+            }
+        }
+    }
   
     if (commandName === 'shop') {
     if (interaction.options.getSubcommand() === 'add') {
         const member = interaction.guild.members.cache.get(interaction.user.id);
     if (member && member.roles.cache.has(config.staffId)) {
       const name = options.getString('name');
-      const price = 1
-      const image = options.getString('image')
+      const price = 1;
+      const image = options.getString('image');
       const channel = options.getChannel('channel');
 
       const x = options.getString('x');
@@ -424,42 +630,44 @@ client.on('interactionCreate', async interaction => {
       const price = args[2];
         const modal = new ModalBuilder()
         .setCustomId(`order_${name}_${price}`)
-        .setTitle('your in game name');
+        .setTitle('Order');
+        
         const ingamenameInput = new TextInputBuilder()
         .setCustomId('ingamenameInput')
-        .setLabel("What is your in game name?")
+        .setLabel("in game name")
         .setStyle(TextInputStyle.Short);
-        const Row = new ActionRowBuilder()
+        
+        const amountInput = new TextInputBuilder()
+        .setCustomId('amountInput')
+        .setLabel("amount of kits to be delivered?")
+        .setStyle(TextInputStyle.Short);
+        
+        const firstRow = new ActionRowBuilder()
         .addComponents(ingamenameInput);
-        modal.addComponents(Row)
+        const secondRow = new ActionRowBuilder()
+        .addComponents(amountInput);
+        
+        modal.addComponents(firstRow, secondRow)
         interaction.showModal(modal);
     }
 });
 
+var lastDeliver = '';
 client.on("interactionCreate", interaction => {
   if (!interaction.isModalSubmit()) return;
 
   if (interaction.customId.startsWith('order_')) {
     const args = splitCustomId(interaction.customId);
     const ign = interaction.fields.getTextInputValue('ingamenameInput');
+    const amount = interaction.fields.getTextInputValue('amountInput');
     const name = args[1];
     const onlineStatus = checkIfUserIsOnline(ign);
     const currentTime = Date.now();
+    
+    console.log("Ordering");
 
     if (onlineStatus === true) {
       if (!commandCooldowns[interaction.user.username] || currentTime - commandCooldowns[interaction.user.username] >= 15 * 60 * 1000) {
-        if (isServerOnCooldown()) {
-          const embed = new EmbedBuilder()
-          .setTitle("i am already delivering a kit")
-          .setDescription("try again in a 30 seconds")
-          .setColor(config.color)
-          .setFooter({
-              text: config.footer,
-              iconURL: config.logo,
-            })
-          .setTimestamp();
-          interaction.reply({ embeds: [embed], ephemeral: true });
-        } else {
           const embed = new EmbedBuilder()
           .setTitle("succesfully started delivering your kit")
           .setDescription("accept the tpa request from `TSG` on alacity to recieve your kit.")
@@ -471,10 +679,27 @@ client.on("interactionCreate", interaction => {
           .setTimestamp();
           interaction.reply({ embeds: [embed], ephemeral: true });
 
-          new Delivery(name, ign, interaction);
-          updateServerCooldown();
+          if (bot.queue.length < 1 && !isOnsSecondaryCooldown()) {
+              delivery(name, ign, amount, interaction);
+              lastDeliver = ign;
+          } else {
+              console.log("pushing to queue");
+              // these are followup orders this makes sure its actually possible to follow up
+              if (lastDeliver == ign) {
+                  bot.queue.push({name:name, ign:ign, amount:amount, interaction:interaction});
+                  if (!isServerOnCooldown()) {
+                      updateServerCooldown();
+                  }
+              } else {
+                  // start new followuppable order
+                  bot.queue.push({name:name, ign:ign, amount:amount, interaction:interaction, followup:true});
+                  lastDeliver = ign;
+                  if (!isServerOnCooldown()) {
+                      updateServerCooldown();
+                  }
+              }
+          }
           return
-        }
       } else {
         const remainingTime = Math.ceil((15 * 60 * 1000 - (currentTime - commandCooldowns[interaction.user.username])) / 1000);
         
@@ -503,68 +728,140 @@ client.on("interactionCreate", interaction => {
   }
 });
 
+async function openContainer(block) {
+    const c = await bot.openContainer(block);
+    return c;
+}
+
+async function withdrawItem(chest, name, amount) {
+    const item = itemByName(chest.containerItems(), name)
+    if (item) {
+      try {
+        await chest.withdraw(item.type, null, amount)
+        console.log(`withdrew ${amount} ${item.name}`)
+      } catch (err) {
+        console.log(`unable to withdraw ${amount} ${item.name}`)
+      }
+    } else {
+      console.log(`unknown item ${name}`)
+    }
+}
+
+function itemByName (items, name) {
+    let item
+    let i
+    for (i = 0; i < items.length; ++i) {
+        item = items[i]
+        if (item && item.name.includes(name)) return item
+    }
+    return null
+}
+
+function randomIntFromInterval(min, max) { // min and max included 
+    return Math.floor(Math.random() * (max - min + 1) + min)
+}
+
+function makeid(length=randomIntFromInterval(10, 15)) {
+    var result           = '';
+    //var characters       = '+-=!@#$%\"\'&*();:][{}/?~z,.<>^ ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    var characters = 'abcdefghijklmnopqrstuvwxyz'
+	var charactersLength = characters.length;
+    for ( var i = 0; i < length; i++ ) {
+        result += characters.charAt(Math.floor(Math.random() * charactersLength));
+    }
+    return result;
+}
+
+function offListeners(handler, handler2) {
+    bot.off("goal_reached", handler);
+    bot.off("messagestr", handler2);
+}
+
 class Delivery {
-  constructor(name, ign, interaction, minecraft=false) {
+  constructor(name, ign, amount, interaction, minecraft=false) {
       // code edited by fit.mc
+      function range (start, end) { return [...Array(1+end-start).keys()].map(v => start+v) }
       this.name = name;
       this.ign = ign;
       this.interaction = interaction;
       this.minecraft = minecraft;
+      this.amount = parseInt(amount);
 
       log(`${ign} ordered a kit named ${name}!`)
       const kitData = JSON.parse(fs.readFileSync(`./data/kitHierarchy/${name}.json`, "utf-8"));
       bot.pathfinder.setMovements(defaultMove)
       bot.pathfinder.setGoal(new GoalNear(kitData.x, kitData.y, kitData.z, 1));
-      bot.on("goal_reached", () => {
+      bot.once("goal_reached", function handler() {
+        //bot.off("goal_reached", handler);
+        var chest;
         const chestToOpen = bot.blockAt(new Vec3(kitData.x, kitData.y, kitData.z));
-        if (chestToOpen && chestToOpen.name === 'trapped_chest') {
-          bot.openChest(chestToOpen);
-    
-          bot.on("windowOpen", (window) => {
+        bot.on("windowOpen", (window) => {
+            setTimeout(() => {
+                if (amount > 36) {
+                    //bot.chat(`/w ${ign} delivering more than 36 kits, please stay online and wait for my tpa cooldown so i can deliver the full order`);
+                    var amounts = new Array(Math.floor(amount / 36)).fill(36).concat(amount % 36);
+                    amount = amounts[0];
+                    amounts.shift();
+                    for (var i = 0; i < amounts.length; i++) {
+                        let a = amounts[i];
+                        let delivr = {"name": name, "ign": ign, "amount": a, "interaction":interaction}
+                        bot.queue.push(delivr)
+                    }
+                }
+                client.user.setStatus('dnd')
+                withdrawItem(chest, "experience", amount) // change to shulker_box
+            }, 500);
             setTimeout(() => {
               window.close();   
-            }, 500);
-          });
-          setTimeout(() => {
-            const coolIgn = ign.split('\n')
-            console.log(coolIgn[0]);
-            bot.chat(`/tpa ${coolIgn}`);
-            return
-          }, 2000);,
-          
-          bot.on("messagestr", (message) => {
-            if (message.startsWith(config.tpaAcceptedMessage)) {
-                logCords(this.interaction, ign, new Date(), kitData, bot, minecraft=minecraft)
+            }, 1000);
+        });
+        if (chestToOpen && chestToOpen.name === 'chest') {
+            openContainer(chestToOpen).then(function(c) {
+                chest = c;
+                bot.chat(`/tpa ${config.secondUsername}`);
                 setTimeout(() => {
-                  bot.chat('/kill');
+                    secondBot.chat(`/tpy ${config.username}`);
                 }, 500);
-                const currentTime = Date.now();
-    
-                const fileContent = fs.readFileSync('./data/noCooldown.txt', 'utf-8');
-                const linesArray = fileContent.split('\n');
-                const containsString = linesArray.includes((minecraft) ? ign : interaction.user.username);
-    
-                if (containsString) {
-                  return;
-                } else {
-                  commandCooldowns[(minecraft) ? ign : interaction.user.username] = currentTime;
-                };
-                return
-              } else if (message.startsWith(config.pendingRequest)) {
-                setTimeout(() => {
-                  bot.chat('/kill');
-                }, 500);
-                if (minecraft) {
-                  bot.chat(`/w ${ign} someone has a request pending to you while the bot tried to tpa. try again..`);
-                  return;
-                }
-                interaction.reply({ content: 'someone has a request pending to you while the bot tried to tpa. try again..', ephemeral: true });
-                return
-              }
+                
+                bot.on("messagestr", function handler2(message) {
+                    //bot.off("messagestr", handler2);
+                    if (message.toLowerCase().startsWith(config.tpaAcceptedMessage.toLowerCase())) {
+                        //logCords(this.interaction, ign, new Date(), kitData, bot, minecraft=minecraft)
+                        setTimeout(() => {
+                          if (bot.queue.length < 1) {
+                              client.user.setStatus('online');
+                          }
+                          
+                          console.log("order complete");
+                          
+                          if (!anyQueuedOrder(ign) || true) {
+                              bot.chat('/kill');
+                              secondBot.chat("/kill");
+                              secondBot.chat(`/w ${ign} order complete`);
+                              offListeners(handler, handler2);
+                          }
+                        }, 16000);
+                        const currentTime = Date.now();
+
+                        const fileContent = fs.readFileSync('./data/noCooldown.txt', 'utf-8');
+                        const linesArray = fileContent.split('\n');
+                        const containsString = linesArray.includes((minecraft) ? ign : interaction.user.username);
+
+                        if (containsString) {
+                          return;
+                        } else {
+                          commandCooldowns[(minecraft) ? ign : interaction.user.username] = currentTime;
+                        };
+                        return;
+                    }
+                });
           });
         } else {
           log('No chest found at the specified coordinates.');
-          return
+          bot.chat("/w ${ign} no chest was found at the stash ask the bot owner to fix it");
+          secondBot.chat("/kill");
+          //offListeners();
+          return;
         }
       });
   }
@@ -594,8 +891,17 @@ function isServerOnCooldown() {
   return currentTime - lastCommandTime < globalCooldown;
 }
 
+function isOnsSecondaryCooldown() {
+  const currentTime = Date.now();
+  return currentTime - secondaryTime < secondaryCooldown;
+}
+
 function updateServerCooldown() {
   lastCommandTime = Date.now();
+}
+
+function updateSecondaryCooldown() {
+  secondaryTime = Date.now();
 }
 
 function format(seconds){
@@ -662,7 +968,7 @@ function logCords(interaction, ign, orderTime, kitData, bot, minecraft=false) {
     text: "Made By Capy",
   })
   .setTimestamp();
-  channel.send({ embeds: [embed] });
+  //channel.send({ embeds: [embed] });
 }
 
 function incrementDeliveredCount() {
@@ -683,11 +989,8 @@ function splitCustomId(input) {
 
 function checkIfUserIsOnline(ign) {
   const player = bot.players[ign];
-  if (player) {
-    return true;
-  } else {
-    return false;
-  }
+  if (player) return true;
+  return false;
 }
 
 function saveDataToFile(data, filePath) {

@@ -94,6 +94,42 @@ const mainBot = () => {
         IntentsBitField.Flags.MessageContent,
       ]
   });
+  
+  client.on("messageCreate", (msg) => {
+      if (msg.member == null) return;
+      if (!msg.member.roles.cache.has(config.staffId)) return;
+      // admin only commands
+      let fullCommand = msg.content.toString().split(" ");
+      if (fullCommand.length < 2) return; 
+      let command = fullCommand[0];
+      if (!command.startsWith('!')) return;
+      
+      command = command.substring(1);
+      
+      if (command == "order") {
+          let jsn = fullCommand.slice(1).join(' ');
+          try {
+              jsn = JSON.parse(jsn);
+          } catch (SyntaxError) {
+              webhook.send("invalid json");
+              return;
+          }
+          // [{"AlphaDino":{"balls":1}}]
+          for (const order of jsn) {
+              if (Object.keys(order) < 1) {
+                  webhook.send("no ign to order");
+                  return;
+              }
+              
+              for (const [ign, value] of Object.entries(order)) {
+                  for (const [kitType, amount] of Object.entries(value)) {
+                      console.log(`Making order: ${kitType}, ${ign}, ${amount}`);
+                      makeOrder(kitType, ign, parseInt(amount), null);
+                  }
+              }
+          }
+      }
+  });
 
   client.on('ready', (c) => {
       log(`logged in as: ${c.user.tag}`)
@@ -128,7 +164,6 @@ const mainBot = () => {
         username: config.secondUsername,
         skipValidation: true,
       });
-      client.user.setStatus('online')
   
       secondBot.on("message", (message) => {
         //console.log(`[${config.secondUsername}] > ${message}`)
@@ -136,6 +171,12 @@ const mainBot = () => {
           secondBot.chat('/login ' + config.secondPassword);
         };
       });
+      
+      secondBot.on("login", () => {
+          setTimeout(() => {
+            client.user.setStatus('online')
+          }, 5000)
+      })
       
       secondBot.on("end", (reason) => {
           console.log(reason);
@@ -297,6 +338,7 @@ let lastCommandTime = 0;
 var secondaryCooldown = 61000;
 var secondaryTime = 0;
 
+/*
 client.on('guildMemberAdd', member => {
     const embed = new EmbedBuilder()
     .setTitle('Welcome, ' + member.user.username + '!')
@@ -321,6 +363,7 @@ client.on('guildMemberRemove', member => {
     .setTimestamp();
     member.guild.channels.cache.get(config.welcome).send({ embeds: [embed] });
 });
+*/
 
 function anyQueuedOrder(ign) {
     // check if there is any order by the ign in the queue
@@ -367,15 +410,18 @@ function cancelOrder(ign, interaction=undefined) {
         }
     }
     if (interaction != undefined) {
-        const embed = new EmbedBuilder()
-        .setTitle('order canceled')
-        .setColor(config.color)
-        .setFooter({
-            text: config.footer,
-            iconURL: config.logo,
-          })
-        .setTimestamp();
-        interaction.reply({ embeds: [embed], ephemeral: true });
+        const member = interaction.guild.members.cache.get(interaction.user.id);
+        if (member && member.roles.cache.has(config.staffId)) {
+            const embed = new EmbedBuilder()
+            .setTitle('order canceled')
+            .setColor(config.color)
+            .setFooter({
+                text: config.footer,
+                iconURL: config.logo,
+              })
+            .setTimestamp();
+            interaction.reply({ embeds: [embed], ephemeral: true });
+        }
     }
     var todeliver = {};
     if(kitstodeliver.length > 0) {
@@ -430,81 +476,81 @@ client.on('interactionCreate', async interaction => {
     }
   
     if (commandName === 'shop') {
-    if (interaction.options.getSubcommand() === 'add') {
-        const member = interaction.guild.members.cache.get(interaction.user.id);
-    if (member && member.roles.cache.has(config.staffId)) {
-      const name = options.getString('name');
-      const price = 1;
-      const image = options.getString('image');
-      const channel = options.getChannel('channel');
+        if (interaction.options.getSubcommand() === 'add') {
+            const member = interaction.guild.members.cache.get(interaction.user.id);
+            if (member && member.roles.cache.has(config.staffId)) {
+              const name = options.getString('name');
+              const price = 1;
+              const image = options.getString('image');
+              const channel = options.getChannel('channel');
 
-      const x = options.getString('x');
-      const y = options.getString('y');
-      const z = options.getString('z');
+              const x = options.getString('x');
+              const y = options.getString('y');
+              const z = options.getString('z');
 
-      const hierarchyData = {
-        "price": price,
-        "name": name,
-        "x": x,
-        "y": y,
-        "z": z,
-        "channel": channel,
-        "image": image
-      };
-      const kitHierarchyFilePath = './data/kitHierarchy/' + name + '.json';
-      if (!fs.existsSync(kitHierarchyFilePath)) {
-        saveDataToFile(hierarchyData, kitHierarchyFilePath);
+              const hierarchyData = {
+                "price": price,
+                "name": name,
+                "x": x,
+                "y": y,
+                "z": z,
+                "channel": channel,
+                "image": image
+              };
+              const kitHierarchyFilePath = './data/kitHierarchy/' + name + '.json';
+              if (!fs.existsSync(kitHierarchyFilePath)) {
+                saveDataToFile(hierarchyData, kitHierarchyFilePath);
 
-        const order = new ButtonBuilder()
-            .setCustomId('order_' + name + '_' + price)
-            .setLabel('🛒 Order')
-            .setStyle(ButtonStyle.Success);
+                const order = new ButtonBuilder()
+                    .setCustomId('order_' + name + '_' + price)
+                    .setLabel('🛒 Order')
+                    .setStyle(ButtonStyle.Success);
 
-      const claimRow = new ActionRowBuilder()
-            .addComponents(order);
-      
-      const embed = new EmbedBuilder()
-        .setTitle(`**${name}**`)
-        .setImage(`${image}`)
-        .setColor(config.color)
-        .setFooter({
-          text: "React with 🛒 to claim this item",
-        });
-      channel.send({ embeds: [embed], components: [claimRow] });
+              const claimRow = new ActionRowBuilder()
+                    .addComponents(order);
+              
+              const embed = new EmbedBuilder()
+                .setTitle(`**${name}**`)
+                .setImage(`${image}`)
+                .setColor(config.color)
+                .setFooter({
+                  text: "React with 🛒 to claim this item",
+                });
+              channel.send({ embeds: [embed], components: [claimRow] });
 
-      const embed2 = new EmbedBuilder()
-      .setColor(config.color)
-      .setTitle('🛒 added your item to the shop!')
-      .setFooter({
-        text: config.footer,
-        iconURL: config.logo,
-      })
-      .setTimestamp();
-      interaction.reply({ embeds: [embed2], ephemeral: true });
+              const embed2 = new EmbedBuilder()
+              .setColor(config.color)
+              .setTitle('🛒 added your item to the shop!')
+              .setFooter({
+                text: config.footer,
+                iconURL: config.logo,
+              })
+              .setTimestamp();
+              interaction.reply({ embeds: [embed2], ephemeral: true });
 
-      } else {
-        const embed = new EmbedBuilder()
-        .setTitle('an item with this name already exists...')
-        .setColor(config.color)
-        .setFooter({
-            text: config.footer,
-            iconURL: config.logo,
-          })
-        .setTimestamp();
-        interaction.reply({ embeds: [embed], ephemeral: true });
-      };
-      } else {
-        const embed = new EmbedBuilder()
-        .setTitle("you lack the permissions to execute this command...")
-        .setColor(config.color)
-        .setFooter({
-            text: config.footer,
-            iconURL: config.logo,
-          })
-        .setTimestamp();
-        interaction.reply({ embeds: [embed], ephemeral: true });
-    }
-    }
+              } else {
+                const embed = new EmbedBuilder()
+                .setTitle('an item with this name already exists...')
+                .setColor(config.color)
+                .setFooter({
+                    text: config.footer,
+                    iconURL: config.logo,
+                  })
+                .setTimestamp();
+                interaction.reply({ embeds: [embed], ephemeral: true });
+              };
+              } else {
+                const embed = new EmbedBuilder()
+                .setTitle("you lack the permissions to execute this command...")
+                .setColor(config.color)
+                .setFooter({
+                    text: config.footer,
+                    iconURL: config.logo,
+                  })
+                .setTimestamp();
+                interaction.reply({ embeds: [embed], ephemeral: true });
+              }
+        }
 
     if (interaction.options.getSubcommand() === 'add-mystery') {
       const member = interaction.guild.members.cache.get(interaction.user.id);
@@ -652,6 +698,44 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
+function makeOrder(name, ign, amount, interaction) {
+  console.log("Ordering");
+  if (!checkIfUserIsOnline(ign) && lastDeliver != ign) {
+      if (interaction != null) {          
+          const embed = new EmbedBuilder()
+          .setTitle("the given username is not online so the order can not be completed...")
+          .setColor(config.color)
+          .setFooter({
+              text: config.footer,
+              iconURL: config.logo,
+            })
+          .setTimestamp();
+          interaction.reply({ embeds: [embed], ephemeral: true });
+      } else {
+          webhook.send(`Order of ${name} to ${ign} canceled because the end user is not online.`);
+      }
+      return;
+  }
+  if (bot.queue.length < 1 && !isOnsSecondaryCooldown()) {
+      delivery(name, ign, amount, interaction);
+      lastDeliver = ign;
+  } else {
+      console.log("pushing to queue");
+      // these are followup orders this makes sure its actually possible to follow up
+      if (lastDeliver == ign) {
+          let delivr = {name:name, ign:ign, amount:amount, interaction:interaction};
+      } else {
+          // start new followuppable order
+          let delivr = {name:name, ign:ign, amount:amount, interaction:interaction, followup:true};
+          lastDeliver = ign;
+      }
+      bot.queue.push(delivr);
+      if (!isServerOnCooldown()) {
+          updateServerCooldown();
+      }
+  }
+}
+
 var lastDeliver = '';
 client.on("interactionCreate", interaction => {
   if (!interaction.isModalSubmit()) return;
@@ -663,14 +747,12 @@ client.on("interactionCreate", interaction => {
     const name = args[1];
     const onlineStatus = checkIfUserIsOnline(ign);
     const currentTime = Date.now();
-    
-    console.log("Ordering");
 
     if (onlineStatus === true) {
       if (!commandCooldowns[interaction.user.username] || currentTime - commandCooldowns[interaction.user.username] >= 15 * 60 * 1000) {
           const embed = new EmbedBuilder()
-          .setTitle("succesfully started delivering your kit")
-          .setDescription("accept the tpa request from `TSG` on alacity to recieve your kit.")
+          .setTitle("succesfully started delivering the kit(s)")
+          .setDescription(`Tell the receiver to accept the tpa request from ${config.secondUsername} on 6b6t to receive your kit.`)
           .setColor(config.color)
           .setFooter({
               text: config.footer,
@@ -679,26 +761,7 @@ client.on("interactionCreate", interaction => {
           .setTimestamp();
           interaction.reply({ embeds: [embed], ephemeral: true });
 
-          if (bot.queue.length < 1 && !isOnsSecondaryCooldown()) {
-              delivery(name, ign, amount, interaction);
-              lastDeliver = ign;
-          } else {
-              console.log("pushing to queue");
-              // these are followup orders this makes sure its actually possible to follow up
-              if (lastDeliver == ign) {
-                  bot.queue.push({name:name, ign:ign, amount:amount, interaction:interaction});
-                  if (!isServerOnCooldown()) {
-                      updateServerCooldown();
-                  }
-              } else {
-                  // start new followuppable order
-                  bot.queue.push({name:name, ign:ign, amount:amount, interaction:interaction, followup:true});
-                  lastDeliver = ign;
-                  if (!isServerOnCooldown()) {
-                      updateServerCooldown();
-                  }
-              }
-          }
+          makeOrder(name, ign, amount, interaction);
           return
       } else {
         const remainingTime = Math.ceil((15 * 60 * 1000 - (currentTime - commandCooldowns[interaction.user.username])) / 1000);
@@ -714,16 +777,6 @@ client.on("interactionCreate", interaction => {
         .setTimestamp();
         interaction.reply({ embeds: [embed], ephemeral: true });
       }
-    } else {
-      const embed = new EmbedBuilder()
-      .setTitle("the given username is not online so the order can not be completed...")
-      .setColor(config.color)
-      .setFooter({
-          text: config.footer,
-          iconURL: config.logo,
-        })
-      .setTimestamp();
-      interaction.reply({ embeds: [embed], ephemeral: true });
     };
   }
 });
@@ -841,6 +894,8 @@ class Delivery {
                               offListeners(handler, handler2);
                           }
                         }, 16000);
+                        
+                        /*
                         const currentTime = Date.now();
 
                         const fileContent = fs.readFileSync('./data/noCooldown.txt', 'utf-8');
@@ -852,7 +907,7 @@ class Delivery {
                         } else {
                           commandCooldowns[(minecraft) ? ign : interaction.user.username] = currentTime;
                         };
-                        return;
+                        */
                     }
                 });
           });
